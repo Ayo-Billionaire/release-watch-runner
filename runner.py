@@ -1,11 +1,11 @@
 """Fetch release pages that block Cloudflare Workers and hand the items to the release-watch Worker.
 
 Perplexity and xAI sit behind Cloudflare bot rules that refuse requests from Workers and from
-Python's default TLS fingerprint. curl_cffi impersonates Chrome's fingerprint, which gets through.
+Python's default TLS fingerprint. curl_cffi impersonates browser TLS fingerprints, which get through most of the time.
 The Worker owns all state (what has been seen) and sends the Telegram alerts; this script only
 fetches. Needs RW_INGEST_KEY in the environment.
 """
-import json, os, re, sys, time
+import os, re, sys, time
 from curl_cffi import requests
 
 WORKER = "https://release-watch.noqodepro.workers.dev/ingest"
@@ -18,12 +18,17 @@ SOURCES = [
 ]
 
 
+# From GitHub's IPs the Cloudflare challenge is intermittent and differs per fingerprint (probe 2026-10-10:
+# xAI passed 4 of 5, Perplexity only edge101), so cycle through several until one gets a 200.
+FINGERPRINTS = ["edge101", "chrome", "safari18_0", "firefox133", "chrome131", "edge101", "chrome"]
+
+
 def get(url):
     err = None
-    for delay in (0, 5, 15):  # the Cloudflare challenge is intermittent, a retry usually passes
-        time.sleep(delay)
+    for n, imp in enumerate(FINGERPRINTS):
+        time.sleep(3 if n else 0)
         try:
-            r = requests.get(url, impersonate="chrome", timeout=30)
+            r = requests.get(url, impersonate=imp, timeout=30)
             if r.status_code == 200:
                 return r.text
             err = f"HTTP {r.status_code}"
@@ -71,4 +76,5 @@ for src in SOURCES:
     except Exception as e:
         failed += 1
         print(f"[{src['id']}] FAILED: {e}")
-sys.exit(1 if failed == len(SOURCES) else 0)  # a red run (GitHub emails the owner) only when nothing worked
+# Always exit 0: misses are expected now and then, and the Worker pings Ayo if a source goes 6 hours without a check.
+sys.exit(0)
